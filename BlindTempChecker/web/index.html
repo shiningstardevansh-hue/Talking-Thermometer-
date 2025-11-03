@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Blind Temperature Checker</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #fff;
+      text-align: center;
+      padding-top: 100px;
+    }
+    button {
+      background: #28a745;
+      border: none;
+      color: white;
+      padding: 12px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 18px;
+    }
+    p {
+      margin-top: 20px;
+      font-size: 24px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Blind Temperature Checker</h1>
+  <button onclick="getTemp()">Check Temperature</button>
+  <p id="temp">Waiting...</p>
+
+  <script>
+    async function getTemp() {
+      const res = await fetch("http://localhost:3000/temp");
+      const temp = await res.text();
+      document.getElementById("temp").innerText = `Temperature: ${temp}°C`;
+      const msg = new SpeechSynthesisUtterance(`Temperature is ${temp} degree Celsius`);
+      speechSynthesis.speak(msg);
+    }
+  </script>
+</body>
+</html>
