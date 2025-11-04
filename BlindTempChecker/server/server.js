@@ -126,6 +126,19 @@ function broadcastRateLimited(obj) {
 
 app.get('/temp', (req, res) => {
   if (lastReading.tempC === null) return res.status(503).send('no_data');
+  // support binary CBOR format when requested: /temp?fmt=cbor
+  const fmt = (req.query && req.query.fmt) ? req.query.fmt.toLowerCase() : 'json';
+  if (fmt === 'cbor') {
+    try {
+      const cbor = require('cbor');
+      const payload = cbor.encode(lastReading);
+      res.set('Content-Type', 'application/cbor');
+      return res.send(payload);
+    } catch (e) {
+      console.warn('CBOR encode failed', e.message);
+      return res.status(500).send('cbor_failed');
+    }
+  }
   res.json(lastReading);
 });
 
