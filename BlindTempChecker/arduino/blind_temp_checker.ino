@@ -65,7 +65,13 @@ void setCalibration(int idx, Cal c) {
 // We'll use a small median window + exponential moving average to reduce noise
 // while preserving responsiveness.
 const int RESOLUTION = 12;         // 9-12 bits (12 is highest resolution)
-const unsigned long POLL_INTERVAL = 1000; // ms between requests (>= conversion time)
+const unsigned long POLL_INTERVAL = 1000; // ms between overall polls
+// conversion time per resolution (ms). 12-bit ~750ms, keep small headroom
+const unsigned long CONVERSION_TIME_MS = 750;
+
+// Non-blocking conversion state
+bool conversionPending = false;
+unsigned long conversionRequestedAt = 0;
 
 const int MEDIAN_WINDOW = 5; // keep a small window for median filter
 float window[MEDIAN_WINDOW];
@@ -137,12 +143,43 @@ void setup() {
 
 void loop() {
   unsigned long now = millis();
-  if (now - lastRequest < POLL_INTERVAL) return;
-  lastRequest = now;
 
-  // request temperatures then read each sensor and send per-sensor reading
-  sensors.requestTemperatures(); // blocking - conversion time depends on resolution
-  for (int s = 0; s < sensorCount; ++s) {
+  // Start a conversion if none pending and poll interval reached
+  if (!conversionPending && (now - lastRequest >= POLL_INTERVAL)) {
+    sensors.requestTemperatures(); // start conversion
+    conversionPending = true;
+    conversionRequestedAt = now;
+    lastRequest = now;
+    return; // wait until conversion completes
+  }
+
+  // If a conversion was requested earlier and enough time has passed, read sensors
+  if (conversionPending && (now - conversionRequestedAt >= CONVERSION_TIME_MS)) {
+    conversionPending = false;
+    // read each sensor and send per-sensor reading
+    for (int s = 0; s < sensorCount; ++s) {
+      // attempt read with retry logic
+      const int MAX_RETRIES = 3;
+      int attempts = 0;
+      float t = DEVICE_DISCONNECTED_C;
+      while (attempts < MAX_RETRIES) {
+        t = sensors.getTempC(sensorAddrs[s]);
+        if (t != DEVICE_DISCONNECTED_C && !isnan(t)) break;
+        attempts++;
+        // brief delay before retry (non-blocking style: yield some time)
+        delay(10);
+        // request another conversion if last read failed
+        sensors.requestTemperatures();
+        delay(CONVERSION_TIME_MS);
+      }
+    
+      if (t == DEVICE_DISCONNECTED_C || isnan(t)) {
+        // emit error per sensor with attempt count
+        char buf[128];
+        snprintf(buf, sizeof(buf), "{\"error\":\"sensor_read_failed\",\"id\":%d,\"attempts\":%d}", s, attempts);
+        Serial.println(buf);
+        continue;
+      }
     float t = sensors.getTempC(sensorAddrs[s]);
     if (t == DEVICE_DISCONNECTED_C) {
       // emit error per sensor
