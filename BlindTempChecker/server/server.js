@@ -152,5 +152,18 @@ app.post('/calibration/:id', express.json(), (req, res) => {
   if (typeof offset !== 'number' && typeof mult !== 'number') return res.status(400).send('bad body');
   calibrations[id] = { offset: offset || 0, mult: mult || 1 };
   saveCalibrations();
+  // If an Arduino is connected, send the calibration command so the device persists it too
+  try {
+    if (serialPort && serialPort.isOpen) {
+      const off = calibrations[id].offset;
+      const mu = calibrations[id].mult;
+      const cmd = `SETCAL ${id} ${off} ${mu}\n`;
+      serialPort.write(cmd);
+      console.log('Wrote to serial:', cmd.trim());
+    }
+  } catch (e) {
+    console.warn('Failed to write calibration to serial:', e.message);
+  }
+
   res.json({ ok: true, id, calibration: calibrations[id] });
 });

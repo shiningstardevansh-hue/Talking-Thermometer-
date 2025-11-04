@@ -28,6 +28,24 @@ node server.js
 - Use Live Server in VS Code or open `BlindTempChecker/web/index.html` in your browser.
 - The page connects to the server via WebSocket and will announce temperature readings.
 
+Docker (optional): build and run the server in Docker. Useful if you want to try the final product without installing npm deps locally.
+
+Build and run with docker-compose (maps your serial device through to container):
+
+```bash
+# from repository root
+export SERIAL_PORT=/dev/ttyACM0   # change to your serial device
+docker compose up --build
+```
+
+Or build and run the server container directly:
+
+```bash
+cd BlindTempChecker/server
+docker build -t blind-temp-server .
+docker run --rm -p 3000:3000 -e SERIAL_PORT=/dev/ttyACM0 --device /dev/ttyACM0 blind-temp-server
+```
+
 Notes & tips
 - Serial port: On Linux, typical devices are `/dev/ttyACM0` or `/dev/ttyUSB0`. On Windows use `COM3` style names.
 - If the server cannot open your serial port it will generate simulated readings so you can test the UI.
