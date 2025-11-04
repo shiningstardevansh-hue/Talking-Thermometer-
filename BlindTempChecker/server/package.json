@@ -9,12 +9,14 @@
     "cors": "^2.8.5",
     "cbor": "^8.1.0"
   }
-  ,
+  },
   "devDependencies": {
     "jest": "^29.0.0",
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^2.6.7",
+    "playwright": "^1.38.0"
   },
   "scripts": {
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "test:e2e": "npx playwright test --config=./playwright.config.js"
   }
 }
