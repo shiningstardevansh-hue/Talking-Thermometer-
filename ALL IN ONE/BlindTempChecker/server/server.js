@@ -71,7 +71,14 @@ function handleSerialLine(line) {
     const obj = JSON.parse(line);
     if (obj.tempC !== undefined) {
       // sensor-specific reading
-      const reading = { tempC: parseFloat(obj.tempC), tempF: parseFloat(obj.tempF || (obj.tempC * 9 / 5 + 32)), ts: obj.ts || Date.now(), raw: obj, id: obj.id, addr: obj.addr };
+      let tempC = parseFloat(obj.tempC);
+      // apply server-side calibration if present (id may be string or number)
+      const sid = String(obj.id !== undefined ? obj.id : '0');
+      if (calibrations && calibrations[sid]) {
+        const cal = calibrations[sid];
+        tempC = tempC * (typeof cal.mult === 'number' ? cal.mult : 1) + (typeof cal.offset === 'number' ? cal.offset : 0);
+      }
+      const reading = { tempC: tempC, tempF: parseFloat(obj.tempF || (tempC * 9 / 5 + 32)), ts: obj.ts || Date.now(), raw: obj, id: obj.id, addr: obj.addr };
       lastReading = reading;
       broadcastRateLimited({ type: 'reading', data: reading });
       return;

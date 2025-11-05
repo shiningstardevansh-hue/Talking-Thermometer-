@@ -1,0 +1,339 @@
+:root {
+  --primary-color: #28a745;
+  --text-color: #ffffff;
+  --bg-color: #0b0b0b;
+  --highlight-color: #4CAF50;
+  --error-color: #ff4444;
+  --focus-outline: 4px solid rgba(255, 255, 255, 0.5);
+}
+
+/* Base styles */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  background: var(--bg-color);
+  color: var(--text-color);
+  text-align: center;
+  padding: 20px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.container {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* Header */
+h1 {
+  font-size: 2.4rem;
+  margin: 0 0 12px 0;
+  letter-spacing: 0.6px;
+  color: #ffffff;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.6);
+}
+
+/* Make sure focus outline is visible for keyboard users */
+:focus {
+  outline: var(--focus-outline);
+  outline-offset: 3px;
+}
+
+/* Accessibility-focused button styles */
+button {
+  background: var(--primary-color);
+  border: 3px solid var(--text-color);
+  color: var(--text-color);
+  padding: 18px 34px;
+  border-radius: 16px;
+  cursor: pointer;
+  font-size: 24px;
+  margin: 10px;
+  min-width: 220px;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+  position: relative;
+}
+
+button:hover,
+button:focus {
+  background: var(--highlight-color);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+}
+
+/* Only show the transform for devices that can hover */
+@media (hover: hover) {
+  button:hover { transform: scale(1.05); }
+}
+
+/* Make keyboard focus very visible */
+button:focus-visible {
+  box-shadow: 0 0 0 6px rgba(76, 175, 80, 0.26);
+}
+
+button[aria-pressed="true"] {
+  background: var(--highlight-color);
+  border-color: var(--text-color);
+}
+
+/* Temperature display */
+.reading {
+  font-size: 34px;
+  margin: 20px 0;
+  padding: 22px;
+  border: 2px solid var(--primary-color);
+  border-radius: 15px;
+  background: rgba(40, 167, 69, 0.08);
+  transition: all 0.3s ease;
+}
+
+/* Medical temperature categories */
+.temp-emergency_low {
+  background: #073b6b; /* darker blue for contrast */
+  border-color: #042a4a;
+  color: #ffffff;
+  animation: pulse 1s infinite;
+}
+
+.temp-emergency_high {
+  background: #7b001f; /* darker red for contrast */
+  border-color: #5b0000;
+  color: #ffffff;
+  animation: pulse 1s infinite;
+}
+
+.temp-high {
+  background: #ff9800;
+  border-color: #f57c00;
+  color: #000000;
+}
+
+.temp-normal {
+  background: #2e7d32; /* slightly darker green for contrast */
+  border-color: #1b5e20;
+  color: #ffffff;
+}
+
+.temp-low {
+  background: #1976d2;
+  border-color: #0d47a1;
+  color: #ffffff;
+}
+
+/* Distance warning */
+.temp-out-of-range {
+  background: #424242;
+  border-color: #1f1f1f;
+  color: #ffffff;
+  font-size: 28px;
+}
+
+.reading.small {
+  font-size: 20px;
+  padding: 12px;
+}
+
+/* Controls layout */
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+  margin: 20px 0;
+}
+
+/* Preferences panel */
+.preferences {
+  background: rgba(255,255,255,0.06);
+  padding: 20px;
+  border-radius: 15px;
+  margin: 20px 0;
+}
+
+.preferences label {
+  display: block;
+  margin: 10px 0;
+  font-size: 20px;
+}
+
+/* Form controls */
+input[type="range"],
+select {
+  width: 100%;
+  max-width: 360px;
+  margin: 10px 0;
+  padding: 8px;
+  background: rgba(255,255,255,0.03);
+  border: 2px solid var(--primary-color);
+  border-radius: 10px;
+  color: var(--text-color);
+  font-size: 18px;
+}
+
+select option {
+  background: var(--bg-color);
+}
+
+/* Graph visualization */
+#graph {
+  width: 100%;
+  height: 240px;
+  margin: 20px 0 12px 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+  border-radius: 12px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.6) inset;
+  border: 1px solid rgba(255,255,255,0.03);
+  padding: 6px;
+}
+
+/* Alert system */
+.alert {
+  background: #d32f2f;
+  color: #ffffff;
+  padding: 16px;
+  border-radius: 12px;
+  margin: 10px 0;
+  display: none;
+  font-size: 20px;
+  font-weight: 700;
+  border: 2px solid #ffffff;
+}
+
+.alert.alert-emergency {
+  animation: pulse 2s infinite;
+}
+
+/* Skip link for keyboard navigation */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--primary-color);
+  color: white;
+  padding: 8px;
+  z-index: 100;
+  transition: top 0.3s;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* Screen reader only content */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  border: 0;
+}
+
+/* Responsive design */
+@media (max-width: 600px) {
+  button {
+    width: 100%;
+    margin: 8px 0;
+    font-size: 20px;
+    padding: 16px 20px;
+  }
+  
+  .reading {
+    font-size: 26px;
+    padding: 16px;
+  }
+  
+  .preferences {
+    padding: 15px;
+  }
+}
+
+/* Animations */
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  :root {
+    --primary-color: #00ff00;
+    --highlight-color: #fff;
+    --focus-outline: 4px solid #fff;
+  }
+  
+  button {
+    border-width: 4px;
+  }
+}
+
+/* Reduced motion preferences */
+@media (prefers-reduced-motion) {
+  button,
+  .alert.alert-emergency {
+    animation: none;
+    transition: none;
+  }
+  
+  button:hover {
+    transform: none;
+  }
+}
+
+/* Temperature Guide */
+.reading-guide {
+  background: rgba(0,0,0,0.2);
+  border-radius: 8px;
+  padding: 15px;
+  margin-top: 20px;
+}
+
+.reading-guide h3 {
+  margin: 0 0 10px 0;
+  font-size: 18px;
+}
+
+.guide-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px;
+  margin: 4px 0;
+  border-radius: 4px;
+  font-size: 16px;
+}
+
+.guide-range {
+  font-weight: bold;
+}
+
+.proximity-guide {
+  background: rgba(255,255,255,0.1);
+  padding: 12px;
+  border-radius: 8px;
+  margin: 15px 0;
+  font-size: 18px;
+}
+
+/* Utility classes */
+.visually-hidden { 
+  position: absolute !important; 
+  height: 1px; 
+  width: 1px; 
+  overflow: hidden; 
+  clip: rect(1px, 1px, 1px, 1px); 
+  white-space: nowrap; 
+}
+
+/* Footer small note */
+.small-note { 
+  font-size: 13px; 
+  opacity: 0.8; 
+  margin-top: 8px; 
+}

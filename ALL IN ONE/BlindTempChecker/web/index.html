@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Temperature Monitor</title>
+    <style>
+        :root {
+            --primary: #28a745;
+            --bg: #111;
+            --text: #fff;
+        }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 { 
+            font-size: 2rem;
+            margin: 0 0 1rem;
+        }
+        button {
+            background: var(--primary);
+            color: var(--text);
+            border: 2px solid var(--text);
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 10px;
+            min-width: 200px;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
+        .reading {
+            font-size: 2rem;
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px solid var(--primary);
+            border-radius: 8px;
+        }
+        #graph {
+            width: 100%;
+            height: 200px;
+            margin: 20px 0;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .preferences {
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        label {
+            display: block;
+            margin: 10px 0;
+        }
+        select, input[type="range"] {
+            width: 100%;
+            max-width: 300px;
+            margin: 5px 0;
+            background: rgba(255,255,255,0.1);
+            color: var(--text);
+            border: 1px solid var(--primary);
+            padding: 5px;
+            border-radius: 4px;
+        }
+        .alert {
+            background: #dc3545;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <main id="main" class="container" role="main">
+    <h1 id="appTitle">ECHO TEMP PRO</h1>
+
+    <p class="small-note">Accessible temperature monitor — voice, keyboard, and touch friendly.</p>
+
+    <section class="controls" aria-label="Primary controls">
+      <button id="startButton">Start Monitoring</button>
+      <button id="speakToggle" aria-pressed="true">Speak: On</button>
+    </section>
+
+    <output id="temp" class="reading" aria-live="polite">Waiting for temperature...</output>
+
+    <aside class="graph-container" aria-label="Temperature trend visualization">
+      <canvas id="graph" aria-label="Temperature trend graph"></canvas>
+      <div id="graphDescription" class="sr-only" aria-live="polite">No temperature data recorded yet.</div>
+    </aside>
+
+    <section class="preferences" aria-label="Preferences" id="prefs">
+      <h2>Preferences</h2>
+      <label for="speechRate">Speech rate
+        <input id="speechRate" type="range" min="0.5" max="2" step="0.1" value="1" aria-label="Speech rate">
+      </label>
+
+      <label for="tempUnit">Temperature unit
+        <select id="tempUnit" aria-label="Choose temperature unit">
+          <option value="C">Celsius (°C)</option>
+          <option value="F">Fahrenheit (°F)</option>
+        </select>
+      </label>
+
+      <label for="updateFreq">Update frequency (seconds)
+        <select id="updateFreq" aria-label="Choose update frequency">
+          <option value="2">2</option>
+          <option value="5">5</option>
+          <option value="10">10</option>
+        </select>
+      </label>
+
+      <label for="modeSelect">Reading Mode
+        <select id="modeSelect" aria-label="Choose reading mode">
+          <option value="medical">Medical (Body Temperature)</option>
+          <option value="ambient">Ambient (Room Temperature)</option>
+        </select>
+      </label>
+
+      <div class="reading-guide">
+        <h3>Temperature Guide</h3>
+        <div id="tempGuide" class="temp-guide">
+          <!-- Dynamically updated based on mode -->
+        </div>
+      </div>
+    </section>
+
+    <div id="alertBox" role="alert" aria-live="assertive" class="alert" style="display:none"></div>
+    
+        <output id="proximityGuide" class="proximity-guide" aria-live="polite">
+      Keep device 15-20cm from measurement point
+    </output>
+
+    <p class="small-note">Keyboard: Space = start/stop, M = toggle voice</p>
+  </main>
+
+  <script>
+  // Immediately invoked function expression with error boundary
+const BlindTempChecker = (() => {
+    'use strict';
+    
+    // Error boundary setup
+    const setupErrorHandlers = () => {
+      window.addEventListener('error', (event) => {
+        console.error('Global error:', event.error);
+        showAlert('An error occurred. Please refresh the page if problems persist.', true);
+      });
+
+      window.addEventListener('unhandledrejection', (event) => {
+        console.error('Unhandled promise rejection:', event.reason);
+        showAlert('A network error occurred. Please check your connection.', true);
+      });
+    };
+
+    // Tiny, client-side EchoTempPro assistant
+    class EchoTempPro {
+      constructor() {
+        this.tempHistory = [];
+        this.anomalyThreshold = 2; // °C
+        this.comfortable = { min: 36.1, max: 37.2 }; // Normal human body temperature range
+        this.patterns = [];
+        this.alertThresholds = { cold: 35, hot: 38 }; // Medical fever thresholds
+        this.proximityThreshold = { min: 15, max: 20 }; // Proximity range in cm
+        this.readingMode = 'medical'; // medical or ambient
+        this.lastReadingTime = 0;
+        this.readingCooldown = 2000; // 2 seconds between readings
+      }
+
+      addReading(tempC) {
+        this.tempHistory.push({ temp: tempC, timestamp: Date.now() });
+        const oneHourAgo = Date.now() - 60 * 60 * 1000;
+        this.tempHistory = this.tempHistory.filter(r => r.timestamp > oneHourAgo);
+        this.detectPatterns();
+        return this.analyze(tempC);
+      }
+
+      detectPatterns() {
+        if (this.tempHistory.length < 6) return;
+        const recent = this.tempHistory.slice(-6).map(r => r.temp);
+        const diffs = recent.slice(1).map((t, i) => Math.abs(t - recent[i]));
+        const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+        if (avg > 1) this.patterns.push({ type: 'fluctuation', severity: avg > 2 ? 'high' : 'medium' });
+        const rising = recent.every((t, i) => i === 0 || t >= recent[i - 1]);
+        const falling = recent.every((t, i) => i === 0 || t <= recent[i - 1]);
+        if (rising) this.patterns.push({ type: 'trend', direction: 'rising' });
+        if (falling) this.patterns.push({ type: 'trend', direction: 'falling' });
+      }
+
+      /**
+       * Analyze temperature reading with smooth processing and gentle guidance
+       * @param {number} currentTemp - Current temperature reading
+       * @param {number} proximity - Distance from sensor in cm
+       * @returns {Object} Analysis result with status and guidance
+       */
+      analyze(currentTemp, proximity) {
+        // Gently check if we're at the right distance
+        const proximityStatus = this.getProximityGuidance(proximity);
+        if (!proximityStatus.isValid) {
+          return {
+            error: 'distance_guidance',
+            message: proximityStatus.message,
+            action: proximityStatus.action
+          };
+        }
+
+        // Allow sensor to stabilize between readings
+        const now = Date.now();
+        if (now - this.lastReadingTime < this.readingCooldown) {
+          return {
+            error: 'settling',
+            message: 'Please wait a moment for accurate reading',
+            timeRemaining: this.readingCooldown - (now - this.lastReadingTime)
+          };
+        }
+        this.lastReadingTime = now;
+
+        const medicalStatus = this.getMedicalStatus(currentTemp);
+        return {
+          comfort: this.getComfortLevel(currentTemp),
+          trend: this.getTrend(),
+          warning: this.checkForWarnings(currentTemp),
+          suggestion: this.getSuggestion(currentTemp),
+          patterns: this.patterns.slice(-3),
+          priority: this.getPriorityLevel(currentTemp),
+          medicalStatus,
+          tempCategory: this.getTempCategory(currentTemp),
+          isValid: true
+        };
+      }
+
+      /**
+       * Provides gentle guidance for optimal sensor positioning
+       * @param {number} proximity - Current distance from sensor in cm
+       * @returns {Object} Guidance information with status and helpful messages
+       */
+      getProximityGuidance(proximity) {
+        const ideal = (this.proximityThreshold.min + this.proximityThreshold.max) / 2;
+        const tolerance = 2; // cm tolerance for "good" range
+        
+        // Calculate how far we are from ideal position
+        const deviation = Math.abs(proximity - ideal);
+        
+        if (deviation <= tolerance) {
+          return {
+            isValid: true,
+            message: "Perfect position, holding steady",
+            confidence: "high"
+          };
+        }
+        
+        if (proximity < this.proximityThreshold.min) {
+          const adjustment = this.proximityThreshold.min - proximity;
+          return {
+            isValid: false,
+            message: `Gently move back about ${Math.round(adjustment)} centimeters`,
+            action: "move_back",
+            confidence: "medium"
+          };
+        }
+        
+        if (proximity > this.proximityThreshold.max) {
+          const adjustment = proximity - this.proximityThreshold.max;
+          return {
+            isValid: false,
+            message: `Slowly move closer by about ${Math.round(adjustment)} centimeters`,
+            action: "move_closer",
+            confidence: "medium"
+          };
+        }
+        
+        // Within acceptable range but could be better
+        return {
+          isValid: true,
+          message: "Position acceptable, try to hold steady",
+          confidence: "moderate"
+        };
+      }
+
+      getMedicalStatus(t) {
+        if (this.readingMode !== 'medical') return null;
+        if (t < 35) return 'hypothermia';
+        if (t <= 36) return 'low';
+        if (t <= 37.2) return 'normal';
+        if (t <= 38) return 'elevated';
+        if (t <= 39.4) return 'fever';
+        return 'high_fever';
+      }
+
+      getTempCategory(t) {
+        const map = {
+          medical: [
+            { max: 35, cat: 'EMERGENCY_LOW' },
+            { min: 39.4, cat: 'EMERGENCY_HIGH' },
+            { min: 37.2, max: 39.4, cat: 'HIGH' },
+            { min: 36, max: 37.2, cat: 'NORMAL' },
+            { cat: 'LOW' }
+          ],
+          ambient: [
+            { max: 18, cat: 'COLD' },
+            { min: 30, cat: 'HOT' },
+            { cat: 'NORMAL' }
+          ]
+        };
+        const list = map[this.readingMode] || map.ambient;
+        const found = list.find(r => (r.min === undefined || t >= r.min) && (r.max === undefined || t <= r.max));
+        return found ? found.cat : 'UNKNOWN';
+      }
+
+      getPriorityLevel(t) {
+        const checks = {
+          medical: [
+            { test: v => v <= 35, level: 'emergency_hypothermia' },
+            { test: v => v >= 39.4, level: 'emergency_fever' },
+            { test: v => v > 37.2, level: 'warning_elevated' },
+            { test: v => v < 36, level: 'warning_low' },
+            { test: () => true, level: 'normal' }
+          ],
+          ambient: [
+            { test: v => v <= this.alertThresholds.cold, level: 'emergency_cold' },
+            { test: v => v >= this.alertThresholds.hot, level: 'emergency_hot' },
+            { test: v => v < this.comfortable.min - 3, level: 'warning_cold' },
+            { test: v => v > this.comfortable.max + 3, level: 'warning_hot' },
+            { test: () => true, level: 'normal' }
+          ]
+        };
+        const list = checks[this.readingMode] || checks.ambient;
+        const match = list.find(c => c.test(t));
+        return match ? match.level : 'normal';
+      }
+
+      getPositioningInstructions(proximity) {
+        const tooClose = "Move back slightly. Keep your arm extended";
+        const tooFar = "Please move closer while keeping your arm steady";
+        const goodDistance = "Good distance. Keep steady";
+        
+        let baseMsg = '';
+        if (proximity < this.proximityThreshold.min) {
+          baseMsg = tooClose;
+        } else if (proximity > this.proximityThreshold.max) {
+          baseMsg = tooFar;
+        } else {
+          baseMsg = goodDistance;
+        }
+
+        // Add mode-specific guidance
+        if (this.readingMode === 'medical') {
+          let specificGuide = '';
+          const medicalInstructions = {
+            forehead: "For forehead temperature: position the sensor at the center of the forehead, about one finger width above the eyebrows",
+            wrist: "For wrist temperature: locate the pulse point on your wrist and hold the sensor just above it",
+            neck: "For neck temperature: find the carotid artery on either side of your neck and place the sensor nearby"
+          };
+          
+          // Rotate through different measurement spots for variety
+          const spots = Object.values(medicalInstructions);
+          specificGuide = spots[Math.floor(Date.now() / 10000) % spots.length];
+          
+          return `${baseMsg}. ${specificGuide}`;
+        }
+
+        // Ambient mode instructions
+        return `${baseMsg}. Hold the device steady in the air to measure room temperature`;
+      }
+
+      getVoiceInstructions(t, trend) {
+        const instructions = [];
+        
+        // Add emergency instructions
+        if (this.readingMode === 'medical') {
+          if (t <= 35) {
+            instructions.push("Warning: Very low body temperature detected. Seek immediate medical attention. Try to warm up gradually.");
+          } else if (t >= 39.4) {
+            instructions.push("Warning: High fever detected. Seek immediate medical attention. Stay hydrated and try to cool down.");
+          } else if (t > 37.2) {
+            instructions.push("Elevated temperature detected. Consider taking fever reducer and monitor closely.");
+          }
+        }
+
+        // Add trend-based advice
+        if (trend === 'rising' && t > this.comfortable.max) {
+          instructions.push(this.readingMode === 'medical' 
+            ? "Temperature is rising. Please stay hydrated and consider rest."
+            : "Room is getting warm. Consider improving ventilation.");
+        } else if (trend === 'falling' && t < this.comfortable.min) {
+          instructions.push(this.readingMode === 'medical'
+            ? "Temperature is dropping. Try to warm up gradually."
+            : "Room is getting cool. Consider adjusting heating.");
+        }
+
+        return instructions.join(' ');
+      }
+
+      getComfortLevel(t) {
+        if (t < this.comfortable.min) return 'cold';
+        if (t > this.comfortable.max) return 'warm';
+        return 'comfortable';
+      }
+
+      getTrend() {
+        if (this.tempHistory.length < 2) return 'stable';
+        const r = this.tempHistory.slice(-2);
+        const d = r[1].temp - r[0].temp;
+        if (Math.abs(d) < 0.2) return 'stable';
+        return d > 0 ? 'rising' : 'falling';
+      }
+
+      checkForWarnings(t) {
+        const w = [];
+        if (this.tempHistory.length >= 2) {
+          const last = this.tempHistory[this.tempHistory.length - 2].temp;
+          if (Math.abs(t - last) > this.anomalyThreshold) w.push('Unusual temperature change detected');
+        }
+        if (t <= this.alertThresholds.cold) w.push('Dangerously cold temperature detected');
+        else if (t >= this.alertThresholds.hot) w.push('Dangerously high temperature detected');
+        return w.length ? w.join('. ') : null;
+      }
+
+      getSuggestion(t) {
+        const s = [];
+        if (t < 18) {
+          s.push('Consider turning on heating', 'Wear warmer clothes');
+          if (t < 15) s.push('Take immediate action to warm the space');
+        } else if (t > 26) {
+          s.push('Consider cooling measures', 'Ensure ventilation');
+          if (t > 30) s.push('Take immediate action to cool the space');
+        } else s.push('Temperature is comfortable');
+        return s.join('. ');
+      }
+    }
+
+    // --- App state ---
+    const ai = new EchoTempPro();
+    let ws = null;
+    let speakEnabled = true;
+    let speechRate = 1;
+    let tempUnit = 'C';
+    const speakQueue = [];
+    const maxPoints = 60;
+    const data = [];
+
+    // DOM refs
+    const startBtn = document.getElementById('startButton');
+    const speakBtn = document.getElementById('speakToggle');
+    const tempOut = document.getElementById('temp');
+    const canvas = document.getElementById('graph');
+    const alertBox = document.getElementById('alertBox');
+    const speechRateInput = document.getElementById('speechRate');
+    const tempUnitSelect = document.getElementById('tempUnit');
+    const updateFreqSelect = document.getElementById('updateFreq');
+    const ctx = canvas.getContext('2d');
+
+    // --- Persistence helpers ---
+    function savePrefs() {
+      try {
+        localStorage.setItem('echo_speak', JSON.stringify(speakEnabled));
+        localStorage.setItem('echo_rate', String(speechRate));
+        localStorage.setItem('echo_unit', tempUnit);
+        localStorage.setItem('echo_freq', updateFreqSelect.value);
+      } catch (e) {
+        console.warn('Could not save preferences', e);
+      }
+    }
+
+    function loadPrefs() {
+      try {
+        const s = localStorage.getItem('echo_speak');
+        const r = localStorage.getItem('echo_rate');
+        const u = localStorage.getItem('echo_unit');
+        const f = localStorage.getItem('echo_freq');
+        if (s !== null) speakEnabled = JSON.parse(s);
+        if (r !== null) speechRate = Number.parseFloat(r);
+        if (u) tempUnit = u;
+        if (f) updateFreqSelect.value = f;
+      } catch (e) { console.warn('loadPrefs error', e); }
+      // reflect UI
+      speakBtn.setAttribute('aria-pressed', String(speakEnabled));
+      speakBtn.textContent = speakEnabled ? 'Speak: On' : 'Speak: Off';
+      speechRateInput.value = String(speechRate);
+      tempUnitSelect.value = tempUnit;
+    }
+
+    // --- Speech helper ---
+    function speak(text, interrupt = false, priority = 'normal') {
+      if (!speakEnabled || !globalThis.speechSynthesis) return;
+      
+      try {
+        // Immediate feedback for critical messages
+        if (priority === 'high' || interrupt) {
+          globalThis.speechSynthesis.cancel();
+        }
+        
+        // Smart queue management
+        if (priority === 'low' && speakQueue.length > 2) {
+          return; // Skip low priority messages if busy
+        }
+        
+        const utt = new SpeechSynthesisUtterance(text);
+        utt.rate = speechRate;
+        // Adjust pitch slightly for different message types
+        utt.pitch = priority === 'high' ? 1.1 : 1.0;
+        utt.onend = () => {
+          if (speakQueue.length > 0) {
+            const nextText = speakQueue.shift();
+            speak(nextText, false);
+          }
+        };
+        utt.onerror = (e) => {
+          console.error('Speech synthesis error:', e);
+          speakQueue.length = 0; // Clear queue on error
+        };
+        
+        if (globalThis.speechSynthesis.speaking) {
+          speakQueue.push(text);
+        } else {
+          globalThis.speechSynthesis.speak(utt);
+        }
+    }
+
+    function showAlert(message, emergency = false) {
+      try {
+        // Clear any existing alert timeout
+        if (alertBox.dataset.timeoutId) {
+          clearTimeout(Number(alertBox.dataset.timeoutId));
+        }
+        
+        // Update alert content and style
+        alertBox.textContent = message;
+        alertBox.className = emergency ? 'alert alert-emergency' : 'alert';
+        alertBox.style.display = 'block';
+        
+        // Speak emergency messages
+        if (emergency) {
+          speak(message, true);
+        }
+        
+        // Set timeout to hide alert
+        const timeoutId = setTimeout(() => {
+          alertBox.style.display = 'none';
+          delete alertBox.dataset.timeoutId;
+        }, emergency ? 10000 : 5000);
+        
+        // Store timeout ID for cleanup
+        alertBox.dataset.timeoutId = timeoutId.toString();
+      } catch (error) {
+        console.error('Error showing alert:', error);
+        // Fallback alert handling
+        if (emergency) {
+          speak('Important alert: ' + message, true);
+        }
+      }
+    }
+
+    // --- Graph ---
+    let resizeTimer = null;
+    const debounce = (fn, delay) => {
+      return (...args) => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => fn(...args), delay);
+      };
+    };
+
+    function resizeCanvas() {
+      try {
+        const container = document.querySelector('.container');
+        if (!container || !canvas) return;
+        
+        const devicePixelRatio = window.devicePixelRatio || 1;
+        const width = Math.min(900, container.clientWidth);
+        canvas.width = width * devicePixelRatio;
+        canvas.height = 220 * devicePixelRatio;
+        canvas.style.width = width + 'px';
+        canvas.style.height = '220px';
+        
+        ctx.scale(devicePixelRatio, devicePixelRatio);
+        drawGraph();
+      } catch (error) {
+        console.error('Canvas resize error:', error);
+      }
+    }
+
+    function drawGraph() {
+      if (!ctx || !canvas) return;
+      try {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (data.length < 2) {
+          // Draw empty state indication
+          ctx.fillStyle = 'rgba(255,255,255,0.1)';
+          ctx.textAlign = 'center';
+          ctx.font = '16px sans-serif';
+          ctx.fillText('Waiting for temperature data...', canvas.width/2, canvas.height/2);
+          return;
+        }
+        
+        const safeData = data.filter(d => !isNaN(d) && isFinite(d));
+        if (safeData.length < 2) return;
+        
+        const min = Math.min(...safeData) - 1;
+        const max = Math.max(...safeData) + 1;
+        const range = max - min || 1;
+        const step = canvas.width / (maxPoints - 1);
+      ctx.beginPath();
+      for (let i = 0; i < data.length; i++) {
+        const x = i * step;
+        const y = canvas.height - ((data[i] - min) / range) * canvas.height;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = '#28a745';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function pushData(tC) {
+      try {
+        // Validate temperature data
+        if (!isFinite(tC) || Number.isNaN(tC)) {
+          console.warn('Invalid temperature value:', tC);
+          return;
+        }
+
+        // Detect sudden large changes (potential errors)
+        if (data.length > 0) {
+          const lastTemp = data[data.length - 1];
+          const change = Math.abs(tC - lastTemp);
+          if (change > 5) { // More than 5 degrees sudden change
+            console.warn('Large temperature change detected:', change);
+            // Optional: speak warning for blind users
+            speak('Warning: Unusual temperature change detected. Please verify reading.');
+          }
+        }
+
+        // Store timestamp with temperature for time-based analysis
+        const timestamp = Date.now();
+        data.push({
+          temp: tC,
+          time: timestamp
+        });
+
+        // Maintain fixed window of data
+        if (data.length > maxPoints) {
+          data.shift();
+        }
+
+        // Clean old data (older than 1 hour)
+        const oneHourAgo = timestamp - (60 * 60 * 1000);
+        data = data.filter(d => d.time > oneHourAgo);
+
+        // Update graph with new data
+        drawGraph();
+
+        // Update screen reader description
+        updateGraphDescription();
+      } catch (error) {
+        console.error('Error in pushData:', error);
+      }
+    }
+
+    function updateGraphDescription() {
+      const graphDesc = document.getElementById('graphDescription');
+      if (!graphDesc || data.length === 0) return;
+
+      const latest = data[data.length - 1].temp;
+      const trend = data.length > 1 ? 
+        (latest > data[data.length - 2].temp ? 'rising' : 
+         latest < data[data.length - 2].temp ? 'falling' : 'stable') : 
+        'stable';
+
+      graphDesc.textContent = `Temperature ${trend} at ${latest.toFixed(1)} degrees`;
+    }
+
+    // --- Incoming data handling ---
+    /**
+     * Handles temperature readings with smooth processing and gentle feedback
+     * @param {Object} payload - Temperature reading data
+     */
+    function handleReading(payload) {
+      // Quick acknowledgment
+      let responseStarted = false;
+      
+      // Immediate feedback timer
+      const quickFeedback = setTimeout(() => {
+        speak('Processing reading...', false, 'low');
+        responseStarted = true;
+      }, 300);
+
+      try {
+        // Validate input with immediate response
+        if (!payload || typeof payload !== 'object') {
+          clearTimeout(quickFeedback);
+          speak('Adjusting sensor, one moment please', false, 'low');
+          return;
+        }
+
+        // Fast temperature processing
+        const tC = Number(payload.tempC);
+        const tF = Number(payload.tempF);
+        const proximity = Number(payload.proximity || 17);
+        
+        // Clear quick feedback if we got data fast enough
+        clearTimeout(quickFeedback);
+
+      if (Number.isNaN(tC) || Number.isNaN(tF) || Number.isNaN(proximity)) {
+        speak('Invalid temperature reading');
+        showAlert('Invalid temperature data received', true);
+        return;
+      }
+
+      // Validate temperature ranges
+      if (tC < -50 || tC > 100 || tF < -58 || tF > 212) {
+        speak('Temperature reading out of valid range');
+        showAlert('Temperature reading out of valid range', true);
+        return;
+      }
+
+      const display = tempUnit === 'C' ? tC : tF;
+      
+      // Get analysis with proximity check
+      const analysis = ai.addReading(tC, proximity);
+      
+      // Handle invalid readings
+      if (!analysis.isValid) {
+        tempOut.textContent = analysis.message;
+        speak(analysis.message);
+        return;
+      }
+
+      // Update temperature display with category
+      const category = analysis.tempCategory;
+      const categoryClass = `temp-${category.toLowerCase()}`;
+      tempOut.className = `reading ${categoryClass}`;
+      tempOut.textContent = `${display.toFixed(1)}°${tempUnit} - ${category}`;
+      
+      // Update graph
+      pushData(tC);
+
+      // Handle warnings and alerts
+      if (analysis.warning) {
+        showAlert(analysis.warning, analysis.priority.startsWith('emergency'));
+      }
+
+      // Prepare voice feedback (build array without repeated push calls)
+      const voiceParts = [
+        ai.getPositioningInstructions(proximity),
+        `Temperature ${display.toFixed(1)} degrees ${tempUnit === 'C' ? 'Celsius' : 'Fahrenheit'}`,
+        ...(ai.readingMode === 'medical' ? [`Status: ${analysis.medicalStatus.replace('_', ' ')}`] : []),
+        ...(analysis.trend && analysis.trend !== 'stable' ? [`Trend is ${analysis.trend}`] : []),
+        ...(ai.getVoiceInstructions(tC, analysis.trend) ? [ai.getVoiceInstructions(tC, analysis.trend)] : []),
+        ...(analysis.suggestion ? [analysis.suggestion] : [])
+      ].filter(Boolean);
+
+      speak(voiceParts.join('. '));
+    }
+
+    // (Removed duplicate global getPositioningInstructions) - class method used instead
+
+    // --- WebSocket connection ---
+    function startMonitoring() {
+      if (ws) return; // already running
+      
+      // Immediate UI feedback
+      tempOut.textContent = 'Connecting...';
+      speak('Starting sensor', false, 'low');
+      
+      function connect() {
+        try {
+          // Pre-initialize UI elements for faster response
+          document.body.classList.add('monitoring-active');
+          
+          ws = new WebSocket('ws://localhost:3000');
+          
+          // Quick connection feedback
+          ws.addEventListener('open', () => { 
+            speak('Ready', false, 'low'); 
+            tempOut.textContent = 'Sensor active';
+            showAlert('Device ready', false);
+          
+          ws.addEventListener('message', (e) => {
+            try {
+              const m = JSON.parse(e.data);
+              if (m.type === 'reading') handleReading(m.data);
+            } catch (err) { 
+              console.error('Data parsing error:', err);
+              speak('Error reading temperature data');
+              showAlert('Error reading temperature data', true);
+            }
+          });
+          
+          ws.addEventListener('error', (error) => {
+            console.error('WebSocket error:', error);
+            speak('Connection error occurred');
+            showAlert('Device connection error', true);
+          });
+          
+          ws.addEventListener('close', () => { 
+            speak('Connection lost, attempting to reconnect');
+            showAlert('Connection lost — reconnecting', true); 
+            ws = null; 
+            setTimeout(connect, 5000);
+          });
+        } catch (err) {
+          console.error('Connection error:', err);
+          speak('Unable to connect to device');
+          showAlert('Unable to connect to device', true);
+          setTimeout(connect, 5000);
+        }
+      }
+      
+      connect();
+    }
+
+    function stopMonitoring() {
+      if (!ws) return;
+      ws.close();
+      ws = null;
+      speak('Monitoring stopped');
+    }
+
+    // --- UI wiring ---
+    startBtn.addEventListener('click', () => {
+      if (ws) {
+        stopMonitoring();
+        startBtn.textContent = 'Start Monitoring';
+      } else {
+        startMonitoring();
+        startBtn.textContent = 'Stop Monitoring';
+      }
+    });
+
+    speakBtn.addEventListener('click', () => {
+      speakEnabled = !speakEnabled;
+      speakBtn.setAttribute('aria-pressed', String(speakEnabled));
+      speakBtn.textContent = speakEnabled ? 'Speak: On' : 'Speak: Off';
+      savePrefs();
+      speak(speakEnabled ? 'Voice feedback enabled' : 'Voice feedback disabled');
+    });
+
+    speechRateInput.addEventListener('input', (e) => {
+      speechRate = Number.parseFloat(e.target.value);
+      savePrefs();
+    });
+
+    tempUnitSelect.addEventListener('change', (e) => {
+      tempUnit = e.target.value;
+      savePrefs();
+      speak(`Now using ${tempUnit === 'C' ? 'Celsius' : 'Fahrenheit'}`);
+    });
+
+    updateFreqSelect.addEventListener('change', (e) => {
+      savePrefs();
+      speak(`Update frequency set to ${e.target.value} seconds`);
+    });
+
+    // Enhanced keyboard navigation and shortcuts
+    document.addEventListener('keydown', (e) => {
+      // Only handle shortcuts when not in form controls
+      const isFormControl = e.target.matches('input, select, button, [contenteditable]');
+      
+      if (!isFormControl) {
+        switch(e.code) {
+          case 'Space':
+            e.preventDefault();
+            startBtn.click();
+            break;
+          case 'KeyM':
+            e.preventDefault();
+            speakBtn.click();
+            break;
+          case 'KeyR':
+            e.preventDefault();
+            speak('Current reading: ' + tempOut.textContent);
+            break;
+          case 'KeyH':
+            e.preventDefault();
+            speak('Available keyboard shortcuts: Space to start or stop monitoring, M to toggle voice, R to repeat current reading, H for help, T for temperature guide');
+            break;
+          case 'KeyT': {
+            e.preventDefault();
+            const guide = document.getElementById('tempGuide');
+            speak('Temperature guide: ' + guide.textContent.replaceAll('\n', ', '));
+            break;
+          }
+          case 'Escape':
+            e.preventDefault();
+            if (ws) {
+              stopMonitoring();
+              speak('Monitoring stopped');
+            }
+            break;
+        }
+      }
+    });
+
+    // Touch: simple tap with two fingers toggles speech (helpful with screen readers)
+    (function addTouchShortcuts(){
+      let touchCount = 0; let tmr = null;
+      globalThis.addEventListener('touchstart', (e) => {
+        touchCount = e.touches.length;
+        clearTimeout(tmr);
+        tmr = setTimeout(()=> touchCount = 0, 600);
+        if (touchCount === 2) { speakBtn.click(); }
+      }, { passive: true });
+    })();
+
+    // --- Init ---
+    function updateTempGuide() {
+      const guide = document.getElementById('tempGuide');
+      const medical = ai.readingMode === 'medical';
+      
+      const guides = medical ? [
+        { range: '< 35.0°C', status: 'Emergency Low', class: 'emergency_low' },
+        { range: '35.0-36.0°C', status: 'Low', class: 'low' },
+        { range: '36.1-37.2°C', status: 'Normal', class: 'normal' },
+        { range: '37.3-38.0°C', status: 'Elevated', class: 'high' },
+        { range: '38.1-39.4°C', status: 'Fever', class: 'high' },
+        { range: '> 39.4°C', status: 'Emergency High', class: 'emergency_high' }
+      ] : [
+        { range: '< 18°C', status: 'Cold', class: 'low' },
+        { range: '18-25°C', status: 'Normal', class: 'normal' },
+        { range: '> 25°C', status: 'Hot', class: 'high' }
+      ];
+
+      guide.innerHTML = guides.map(g => `
+        <div class="guide-row temp-${g.class}">
+          <span class="guide-range">${g.range}</span>
+          <span class="guide-status">${g.status}</span>
+        </div>
+      `).join('');
+    }
+
+    // Mode switching handler
+    document.getElementById('modeSelect').addEventListener('change', (e) => {
+      ai.readingMode = e.target.value;
+      updateTempGuide();
+      savePrefs();
+      speak(`Mode changed to ${e.target.value} temperature monitoring`);
+    });
+
+    // Cleanup function to prevent memory leaks
+    function cleanup() {
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+      globalThis.speechSynthesis.cancel();
+      globalThis.removeEventListener('resize', resizeCanvas);
+      clearAllTimeouts();
+    }
+
+    // Store timeouts for cleanup
+    const timeouts = new Set();
+    function setTimeout(fn, delay) {
+      const id = globalThis.setTimeout(() => {
+        timeouts.delete(id);
+        fn();
+      }, delay);
+      timeouts.add(id);
+      return id;
+    }
+
+    function clearAllTimeouts() {
+      for (const id of timeouts) {
+        globalThis.clearTimeout(id);
+        timeouts.delete(id);
+      }
+    }
+
+    // Performance monitoring
+    const perfMonitor = {
+      lastFrameTime: 0,
+      frameCount: 0,
+      fps: 0,
+      
+      tick() {
+        const now = performance.now();
+        this.frameCount++;
+        
+        if (now - this.lastFrameTime >= 1000) {
+          this.fps = this.frameCount;
+          this.frameCount = 0;
+          this.lastFrameTime = now;
+          
+          if (this.fps < 30) {
+            console.warn('Low FPS detected:', this.fps);
+          }
+        }
+      }
+    };
+
+    function init() {
+      try {
+        loadPrefs();
+        resizeCanvas();
+        updateTempGuide();
+        
+        // Use debounced resize handler
+        const debouncedResize = debounce(resizeCanvas, 250);
+        globalThis.addEventListener('resize', debouncedResize);
+        
+        // Clean up on page unload
+        globalThis.addEventListener('unload', cleanup);
+        
+        // Handle visibility and connection changes
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden && ws) {
+            speak('Monitoring paused');
+            ws.close();
+            ws = null;
+          }
+        });
+        
+        // Handle offline/online events
+        globalThis.addEventListener('online', () => {
+          speak('Network connection restored');
+          if (!ws) startMonitoring();
+        });
+        
+        globalThis.addEventListener('offline', () => {
+          speak('Network connection lost');
+          if (ws) {
+            ws.close();
+            ws = null;
+          }
+        });
+        
+        // Check device memory and adjust features
+        if (navigator.deviceMemory && navigator.deviceMemory < 4) {
+          maxPoints = 30; // Reduce data points for low-memory devices
+          console.log('Adjusted for low-memory device');
+        }
+
+      // Announce availability
+      speak('Echo Temp Pro ready. Press Start Monitoring to begin.');
+    }
+
+    // Expose minimal API for testing with safety checks
+    // Initialize the application with proper error handling
+    const initialize = () => {
+      try {
+        setupErrorHandlers();
+        
+        // Safe API exposure with validation
+        Object.defineProperty(window, 'EchoTempPro', {
+          value: class extends EchoTempPro {
+            constructor() {
+              super();
+              console.log('Test instance created');
+            }
+          },
+          writable: false,
+          configurable: false
+        });
+
+        Object.defineProperty(window, '_echo_test_send', {
+          value: (reading) => {
+            if (!reading || typeof reading !== 'object') {
+              throw new Error('Invalid test reading format');
+            }
+            return handleReading(reading);
+          },
+          writable: false,
+          configurable: false
+        });
+
+        // Initialize application
+        init();
+        
+        return true; // Initialization successful
+      } catch (error) {
+        console.error('Critical initialization error:', error);
+        document.body.innerHTML = `
+          <div role="alert" style="color: white; padding: 20px; text-align: center;">
+            <h1>Application Error</h1>
+            <p>Please refresh the page or contact support if the problem persists.</p>
+            <p>Error details: ${error.message}</p>
+          </div>
+        `;
+        return false; // Initialization failed
+      }
+    };
+
+    // Start the application
+    return {
+      start: initialize,
+      version: '1.0.0',
+      description: 'Talking Thermometer for Visually Impaired Users'
+    };
+})();
+
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => BlindTempChecker.start());
+} else {
+  BlindTempChecker.start();
+  </script>
+</body>
+</html>

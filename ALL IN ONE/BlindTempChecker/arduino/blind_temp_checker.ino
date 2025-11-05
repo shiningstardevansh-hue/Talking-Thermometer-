@@ -1,3 +1,154 @@
+// IR-based fast presence/forehead detector for Echo Temp Pro
+// Supports:
+//  - Analog proximity/IR sensor on A0 (fast detection)
+//  - Optional MLX90614 I2C IR thermometer when compiled with -DUSE_MLX
+//
+// Output: newline-delimited JSON over Serial. Example:
+// {"type":"reading","proximity":17,"tempC":36.45,"tempF":97.61,"ts":123456}
+// If MLX not present the temperature fields will be omitted.
+
+#include <Arduino.h>
+// EEPROM is included conditionally later (use __has_include to support editor/CI stubs)
+
+// Uncomment or compile with -DUSE_MLX to enable MLX90614 support.
+#if defined(USE_MLX)
+#if __has_include(<Wire.h>)
+#include <Wire.h>
+#endif
+#if __has_include(<Adafruit_MLX90614.h>)
+#include <Adafruit_MLX90614.h>
+Adafruit_MLX90614 mlx = Adafruit_MLX90614();
+#define MLX_AVAILABLE 1
+#else
+#warning "USE_MLX defined but Adafruit_MLX90614 not available"
+#define MLX_AVAILABLE 0
+#endif
+#else
+#define MLX_AVAILABLE 0
+#endif
+
+// Hardware pins
+const int PROX_PIN = A0; // analog pin for IR/proximity sensor
+const unsigned long POLL_MS = 200; // fast polling for presence (200ms)
+
+// Proximity thresholds (tunable)
+int proxThreshold = 300; // analog value below/above which we consider "present" (depends on sensor)
+
+// Calibration struct stored in EEPROM (one slot)
+struct Cal { float offset; float mult; };
+// Single base address for calibration storage (per-sensor offsets are
+// computed as EEPROM_CAL_BASE + idx * sizeof(Cal)). This unifies the
+// layout used by the IR/MLX path and the DS18B20 path.
+const int EEPROM_CAL_BASE = 0;
+
+Cal getCalibration() {
+  Cal c;
+  EEPROM.get(EEPROM_CAL_BASE, c);
+  if (isnan(c.mult) || c.mult == 0) { c.offset = 0.0f; c.mult = 1.0f; }
+  return c;
+}
+
+void setCalibration(Cal c) {
+  EEPROM.put(EEPROM_CAL_BASE, c);
+  // EEPROM.commit is not required on AVR
+}
+
+// Serial command parser (SETCAL OFFSET MULT)
+void processSerialCommands() {
+  while (Serial.available()) {
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+    if (line.startsWith("SETCAL")) {
+      float offset = 0.0f, mult = 1.0f;
+      int matched = sscanf(line.c_str(), "SETCAL %f %f", &offset, &mult);
+      if (matched >= 1) {
+        Cal c; c.offset = offset; c.mult = (matched==2?mult:1.0f);
+        setCalibration(c);
+        Serial.print("{\"info\":\"calibration_set\",\"offset\":"); Serial.print(c.offset);
+        Serial.print(",\"mult\":"); Serial.print(c.mult);
+        Serial.println("}");
+      } else {
+        Serial.println("{\"error\":\"bad_setcal\"}");
+      }
+    } else {
+      // unknown command
+      Serial.print("{\"error\":\"unknown_cmd\",\"cmd\":\"");
+      Serial.print(line); Serial.println("\"}");
+    }
+  }
+}
+
+unsigned long lastPoll = 0;
+
+// Utility: send reading JSON
+void sendReading(int proximity, bool haveTemp, float tempC) {
+  unsigned long ts = millis();
+  // Build JSON manually for small memory
+  if (haveTemp) {
+    float tempF = tempC * 9.0f / 5.0f + 32.0f;
+    char buf[128];
+    snprintf(buf, sizeof(buf), "{\"type\":\"reading\",\"proximity\":%d,\"tempC\":%.3f,\"tempF\":%.3f,\"ts\":%lu}", proximity, tempC, tempF, ts);
+    Serial.println(buf);
+  } else {
+    char buf[96];
+    snprintf(buf, sizeof(buf), "{\"type\":\"reading\",\"proximity\":%d,\"ts\":%lu}", proximity, ts);
+    Serial.println(buf);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(50);
+  // initialize EEPROM (AVR doesn't need begin)
+#if defined(ESP8266) || defined(ESP32)
+  EEPROM.begin(512);
+#endif
+
+#if MLX_AVAILABLE
+  Wire.begin();
+  if (!mlx.begin()) {
+    Serial.println("{\"info\":\"mlx_init_failed\"}");
+  } else {
+    Serial.println("{\"info\":\"mlx_initialized\"}");
+  }
+#else
+  Serial.println("{\"info\":\"proximity_mode\"}");
+#endif
+
+  // initial report
+  Serial.println("{\"info\":\"ir_presence_detector_ready\"}");
+}
+
+void loop() {
+  processSerialCommands();
+
+  unsigned long now = millis();
+  if (now - lastPoll < POLL_MS) return;
+  lastPoll = now;
+
+  // read proximity sensor (analog)
+  int raw = analogRead(PROX_PIN); // 0-1023
+  int proximity = raw; // pass raw value as "proximity"
+
+  // simple hysteresis / presence detection can be added at server/UI side; we just send fast samples
+
+  bool haveTemp = false;
+  float tempC = NAN;
+
+#if MLX_AVAILABLE
+  if (mlx.begin()) {
+    // MLX returns object temperature and ambient. Use object temperature.
+    tempC = mlx.readObjectTempC();
+    // apply calibration
+    Cal c = getCalibration();
+    tempC = tempC * c.mult + c.offset;
+    haveTemp = true;
+  }
+#endif
+
+  sendReading(proximity, haveTemp, tempC);
+}
 #if __has_include(<OneWire.h>)
 #include <OneWire.h>
 #else
@@ -42,13 +193,12 @@ int sensorCount = 0;
 
 // Calibration storage in EEPROM: for each sensor store float offset (4 bytes) and multiplier (4 bytes)
 // Layout: sensor 0 offset@0..3, mult@4..7, sensor1 offset@8..11, etc.
-const int EEPROM_BASE = 0;
-
-struct Cal { float offset; float mult; };
+// reuse `Cal` defined earlier for IR/MLX code path
+const int EEPROM_BASE = EEPROM_CAL_BASE; // backward-friendly alias
 
 Cal getCalibration(int idx) {
   Cal c;
-  int addr = EEPROM_BASE + idx * sizeof(Cal);
+  int addr = EEPROM_CAL_BASE + idx * sizeof(Cal);
   EEPROM.get(addr, c);
   // if uninitialized, fallback to zero offset, multiplier 1
   if (isnan(c.mult) || c.mult == 0) { c.offset = 0.0; c.mult = 1.0; }
@@ -56,7 +206,7 @@ Cal getCalibration(int idx) {
 }
 
 void setCalibration(int idx, Cal c) {
-  int addr = EEPROM_BASE + idx * sizeof(Cal);
+  int addr = EEPROM_CAL_BASE + idx * sizeof(Cal);
   EEPROM.put(addr, c);
   EEPROM.commit();
 }

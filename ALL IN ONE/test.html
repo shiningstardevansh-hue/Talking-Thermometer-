@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Temperature Test</title>
+</head>
+<body>
+    <div id="output"></div>
+    <script>
+        const out = document.getElementById('output');
+        const ws = new WebSocket('ws://localhost:3000');
+        ws.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'reading') {
+                out.textContent = `Temperature: ${msg.data.tempC.toFixed(1)}°C / ${msg.data.tempF.toFixed(1)}°F`;
+            }
+        };
+    </script>
+</body>
+</html>
